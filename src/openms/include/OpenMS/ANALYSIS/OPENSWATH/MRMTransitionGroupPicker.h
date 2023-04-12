@@ -52,6 +52,7 @@
 #include <OpenMS/OPENSWATHALGO/ALGO/StatsHelpers.h>
 
 #include <numeric>
+#include <omp.h>
 
 //#define DEBUG_TRANSITIONGROUPPICKER
 
@@ -118,7 +119,17 @@ public:
       std::vector<MSChromatogram > picked_chroms;
       std::vector<MSChromatogram > smoothed_chroms;
 
+      picked_chroms.resize(transition_group.getChromatograms.size());
+      smoothed_chroms.resize(transition_group.getChromatograms.size());
+
       // Pick fragment ion chromatograms
+      //TODO parallel
+    
+      #pragma omp parallel 
+      {
+        PeakPickerMRM picker_temp = picker_;
+       
+      #pragma omp for 
       for (Size k = 0; k < transition_group.getChromatograms().size(); k++)
       {
         MSChromatogram& chromatogram = transition_group.getChromatograms()[k];
@@ -134,12 +145,14 @@ public:
 
         MSChromatogram picked_chrom, smoothed_chrom;
         smoothed_chrom.setNativeID(native_id);
-        picker_.pickChromatogram(chromatogram, picked_chrom, smoothed_chrom);
+        picker_temp.pickChromatogram(chromatogram, picked_chrom, smoothed_chrom);
         picked_chrom.sortByIntensity();
-        picked_chroms.push_back(std::move(picked_chrom));
-        smoothed_chroms.push_back(std::move(smoothed_chrom));
+        picked_chroms[k] = std::move(picked_chrom); 
+        smoothed_chroms[k] = std::move(smoothed_chrom); 
+        
+       
       }
-
+      }
       // Pick precursor chromatograms
       if (use_precursors_)
       {
