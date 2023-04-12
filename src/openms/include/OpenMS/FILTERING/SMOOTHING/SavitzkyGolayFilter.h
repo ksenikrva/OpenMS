@@ -112,7 +112,7 @@ public:
     // low level template to filters spectra and chromatograms
     // raw data and meta data needs to be copied to the output container before calling this function
     template<class InputIt, class OutputIt>
-    void filter(InputIt first, InputIt last, OutputIt d_first)
+    void filter(InputIt first, InputIt last, OutputIt d_first) const
     {
       size_t n = std::distance(first, last);
 
@@ -198,7 +198,7 @@ public:
     /**
       @brief Removed the noise from an MSChromatogram
     */
-    void filter(MSChromatogram & chromatogram)
+    void filter(MSChromatogram & chromatogram) const
     {
       // copy the data AND META DATA to the output container
       MSChromatogram output = chromatogram;

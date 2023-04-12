@@ -46,6 +46,7 @@
 
 #include <OpenMS/DATASTRUCTURES/DefaultParamHandler.h>
 #include <OpenMS/CONCEPT/LogStream.h>
+#include <omp.h>
 
 // Cross-correlation
 #include <OpenMS/OPENSWATHALGO/ALGO/Scoring.h>
@@ -115,43 +116,61 @@ public:
       OPENMS_PRECONDITION(transition_group.isInternallyConsistent(), "Consistent state required")
       OPENMS_PRECONDITION(transition_group.chromatogramIdsMatch(), "Chromatogram native IDs need to match keys in transition group")
 
-      std::vector<MSChromatogram > picked_chroms;
-      std::vector<MSChromatogram > smoothed_chroms;
+      std::vector<MSChromatogram> picked_chroms;
+      std::vector<MSChromatogram> smoothed_chroms;
 
-      // Pick fragment ion chromatograms
-      for (Size k = 0; k < transition_group.getChromatograms().size(); k++)
+      picked_chroms.resize(transition_group.getChromatograms().size());
+      smoothed_chroms.resize(transition_group.getChromatograms().size());
+      
+      // double timer_start = omp_get_wtime();
+      #pragma omp parallel
       {
-        MSChromatogram& chromatogram = transition_group.getChromatograms()[k];
-        String native_id = chromatogram.getNativeID();
-
-        // only pick detecting transitions (skip all others)
-        if (transition_group.getTransitions().size() > 0 && 
-            transition_group.hasTransition(native_id)  && 
-            !transition_group.getTransition(native_id).isDetectingTransition() )
+        PeakPickerMRM picker_temp(picker_);
+        #pragma omp for
+        for (Size k = 0; k < transition_group.getChromatograms().size(); k++) // Pick fragment ion chromatograms
         {
-          continue;
+          MSChromatogram& chromatogram = transition_group.getChromatograms()[k];
+          String native_id = chromatogram.getNativeID();
+
+          // only pick detecting transitions (skip all others)
+          if (transition_group.getTransitions().size() > 0 && 
+              transition_group.hasTransition(native_id)  && 
+              !transition_group.getTransition(native_id).isDetectingTransition() )
+          {
+            continue;
+          }
+
+          MSChromatogram picked_chrom, smoothed_chrom;
+          smoothed_chrom.setNativeID(native_id);
+          picker_temp.pickChromatogram(chromatogram, picked_chrom, smoothed_chrom);
+          picked_chrom.sortByIntensity();
+          picked_chroms[k] = std::move(picked_chrom);
+          smoothed_chroms[k] = std::move(smoothed_chrom);
         }
-
-        MSChromatogram picked_chrom, smoothed_chrom;
-        smoothed_chrom.setNativeID(native_id);
-        picker_.pickChromatogram(chromatogram, picked_chrom, smoothed_chrom);
-        picked_chrom.sortByIntensity();
-        picked_chroms.push_back(std::move(picked_chrom));
-        smoothed_chroms.push_back(std::move(smoothed_chrom));
       }
+      // double timer_end = omp_get_wtime();
+      // std::cout << timer_end - timer_start << std::endl;      
 
-      // Pick precursor chromatograms
+      // Pick precursor chromatograms      
       if (use_precursors_)
       {
+        #ifdef _OPENMP
+        int in_parallel = omp_in_parallel();
+        #endif
+        #pragma omp parallel for if (in_parallel == 0)
         for (Size k = 0; k < transition_group.getPrecursorChromatograms().size(); k++)
         {
           SpectrumT picked_chrom, smoothed_chrom;
-          SpectrumT& chromatogram = transition_group.getPrecursorChromatograms()[k];
+          picked_chrom.reserve(transition_group.getPrecursorChromatograms().size());
+          smoothed_chrom.reserve(transition_group.getPrecursorChromatograms().size());
 
-          picker_.pickChromatogram(chromatogram, picked_chrom, smoothed_chrom);
+          SpectrumT& chromatogram = transition_group.getPrecursorChromatograms()[k];
+          PeakPickerMRM picker_temp = picker_;
+
+          picker_temp.pickChromatogram(chromatogram, picked_chrom, smoothed_chrom);
           picked_chrom.sortByIntensity();
-          picked_chroms.push_back(picked_chrom);
-          smoothed_chroms.push_back(smoothed_chrom);
+          picked_chroms[k] = picked_chrom;
+          smoothed_chroms[k] = smoothed_chrom;
         }
       }
 

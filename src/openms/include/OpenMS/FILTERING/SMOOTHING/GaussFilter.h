@@ -87,7 +87,7 @@ public:
     */
     void filter(MSSpectrum & spectrum);
 
-    void filter(MSChromatogram & chromatogram);
+    void filter(MSChromatogram & chromatogram) const;
 
     /**
       @brief Smoothes an MSExperiment containing profile data.

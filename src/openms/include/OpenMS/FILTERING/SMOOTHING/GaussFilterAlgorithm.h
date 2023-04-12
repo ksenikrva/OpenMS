@@ -39,7 +39,10 @@
 #include <OpenMS/INTERFACES/DataStructures.h>
 #include <cmath>
 #include <vector>
+#include <omp.h>
+#include <iostream>
 
+using namespace std;
 namespace OpenMS
 {
   /**
@@ -134,21 +137,23 @@ public:
         ConstIterT mz_in_end,
         ConstIterT int_in_start,
         IterT mz_out,
-        IterT int_out)
+        IterT int_out) const
     {
       bool found_signal = false;
 
-      ConstIterT mz_it = mz_in_start;
+      ConstIterT mz_it;
       ConstIterT int_it = int_in_start;
-      for (; mz_it != mz_in_end; mz_it++, int_it++)
+      GaussFilterAlgorithm g = *this;
+
+      for (mz_it = mz_in_start; mz_it != mz_in_end; mz_it++)
       {
         // if ppm tolerance is used, calculate a reasonable width value for this m/z
         if (use_ppm_tolerance_)
         {
-          initialize((*mz_it) * ppm_tolerance_ * 10e-6, spacing_, ppm_tolerance_, use_ppm_tolerance_ );
+          g.initialize((*mz_it) * ppm_tolerance_ * 10e-6, spacing_, ppm_tolerance_, use_ppm_tolerance_ );
         }
 
-        double new_int = integrate_(mz_it, int_it, mz_in_start, mz_in_end);
+        double new_int = g.integrate_(mz_it, int_it, mz_in_start, mz_in_end);
         
         // store new intensity and m/z into output iterator
         *mz_out = *mz_it;
@@ -156,13 +161,19 @@ public:
         ++mz_out;
         ++int_out;
 
-        if (fabs(new_int) > 0) found_signal = true;
+        if (new_int != 0) found_signal = true;
+        int_it++;
       }
       return found_signal;
     }
 
     void initialize(double gaussian_width, double spacing, double ppm_tolerance, bool use_ppm_tolerance);
 
+  // TODO
+  /*
+  Testdateien anpassen (Signaturen)
+  for-Schleife parallelisieren -X
+  */
 protected:
 
     ///Coefficients
@@ -178,7 +189,7 @@ protected:
 
     /// Computes the convolution of the raw data at position x and the gaussian kernel
     template <typename InputPeakIterator>
-    double integrate_(InputPeakIterator x /* mz */, InputPeakIterator y /* int */, InputPeakIterator first, InputPeakIterator last)
+    double integrate_(InputPeakIterator x /* mz */, InputPeakIterator y /* int */, InputPeakIterator first, InputPeakIterator last) const
     {
       double v = 0.;
       // norm the gaussian kernel area to one
@@ -203,7 +214,7 @@ protected:
         Size left_position = (Size)floor(distance_in_gaussian / spacing_);
 
         // search for the true left adjacent data point (because of rounding errors)
-        for (int j = 0; ((j < 3) &&  (distance(first, help_x - j) >= 0)); ++j)
+        for (UInt j = 0; ((j < 3) &&  (distance(first, help_x - j) >= 0)); ++j)
         {
           if (((left_position - j) * spacing_ <= distance_in_gaussian) && ((left_position - j + 1) * spacing_ >= distance_in_gaussian))
           {
@@ -233,7 +244,6 @@ protected:
         std::cout << "coeffs_ at right_position "  <<  coeffs_[right_position] << std::endl;
         std::cout << "interpolated value left " << coeffs_right << std::endl;
 #endif
-
 
         // search for the corresponding datapoint for (help-1) in the gaussian (take the left most adjacent point)
         distance_in_gaussian = fabs((*x) - (*(help_x - 1)));
@@ -272,7 +282,6 @@ protected:
         std::cout << " intensity " << fabs(*(help_x - 1) - (*help_x)) / 2. << " * " << *(help_y - 1) << " * " << coeffs_left << " + " << *help_y << "* " << coeffs_right
                   << std::endl;
 #endif
-
 
         norm += fabs((*(help_x - 1)) - (*help_x)) / 2. * (coeffs_left + coeffs_right);
 
@@ -364,6 +373,7 @@ protected:
                   << "* " << coeffs_right
                   << std::endl;
 #endif
+
         norm += fabs((*help_x) - (*(help_x + 1)) ) / 2. * (coeffs_left + coeffs_right);
 
         v += fabs((*help_x) - (*(help_x + 1)) ) / 2. * ((*help_y) * coeffs_left + (*(help_y + 1)) * coeffs_right);

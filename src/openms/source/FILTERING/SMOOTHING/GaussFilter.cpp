@@ -68,7 +68,7 @@ namespace OpenMS
     write_log_messages_ = param_.getValue("write_log_messages").toBool();
   }
 
-  void GaussFilter::filter(MSSpectrum & spectrum)
+  void GaussFilter::filter(MSSpectrum & spectrum) 
   {
     // make sure the right data type is set
     spectrum.setType(SpectrumSettings::PROFILE);
@@ -115,7 +115,7 @@ namespace OpenMS
     }
   }
 
-  void GaussFilter::filter(MSChromatogram & chromatogram)
+  void GaussFilter::filter(MSChromatogram & chromatogram) const
   {
     if (param_.getValue("use_ppm_tolerance").toBool())
     {

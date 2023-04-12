@@ -315,7 +315,10 @@ namespace OpenMS
           double best_MZ = cluster_representative.getMZ();
           double overlap_MZ = overlap.getMZ();
 
-          // are the features the same? (@TODO: use "Math::approximatelyEqual"?)
+          // are the features the same? (@TODO: use "OpenMS::Math::approximatelyEqual(overlap_MZ, best_MZ, tol?)"?)
+                                                  //"OpenMS::Math::approximatelyEqual(overlap_RT, best_RT, tol?)"
+          // if (OpenMS::Math::approximatelyEqual(overlap_MZ, best_MZ, tol?) && OpenMS::Math::approximatelyEqual(overlap_RT, best_RT, tol?))
+                                                // tol = |best_MZ - observed_MZ| oder |theoretical_MZ - observed_MZ|
           if ((overlap_MZ == best_MZ) && (overlap_RT == best_RT))
           {
             // update annotations:
@@ -388,7 +391,7 @@ namespace OpenMS
   /// Add a target (from the input file) to the assay library
   void FeatureFinderAlgorithmMetaboIdent::addTargetToLibrary_(const String& name, const String& formula,
                            double mass, const vector<Int>& charges,
-                           const vector<double>& rts,
+                           const vector<double>& rts,   // retention times
                            vector<double> rt_ranges,
                            const vector<double>& iso_distrib)
   {
@@ -405,6 +408,14 @@ namespace OpenMS
       return;
     }
     // @TODO: detect entries with same RT and m/z ("collisions")
+    /*
+    if ()
+    {
+      OPENMS_LOG_ERROR << "Error: Collision. Already found an entry with the same RT and m/z '"
+                       << name << "' - skipping this target." << endl; 
+      return;
+    }
+    */
     TargetedExperiment::Compound target;
     target.setMetaValue("name", name);
     target.molecular_formula = formula;
@@ -424,9 +435,11 @@ namespace OpenMS
     {
       if (formula.empty())
       {
-        OPENMS_LOG_ERROR << "Error: No sum formula given for target '" << name
+        /*
+        OPENMS_LOG_ERROR << "Warning: No sum formula given for target '" << name
                          << "'; cannot calculate isotope distribution"
                          << " - using estimation method for peptides." << endl;
+        */
         iso_dist = iso_gen_.estimateFromPeptideWeight(mass);
       }
       else
@@ -513,6 +526,7 @@ namespace OpenMS
   {
     // go through different isotopes:
     Size counter = 0;
+    //vector<MassAbundance> mass = iso_dist.MassAbundance();
     for (const Peak1D& iso : iso_dist)
     {
       ReactionMonitoringTransition transition;
@@ -524,6 +538,7 @@ namespace OpenMS
       // @TODO: use accurate masses from the isotope distribution here?
       transition.setProductMZ(mz + abs(Constants::C13C12_MASSDIFF_U *
                                        float(counter) / charge));
+                           //(mass * charge)? where counter?
       transition.setLibraryIntensity(iso.getIntensity());
       // transition.setMetaValue("annotation", annotation); // ???
       transition.setCompoundRef(target_id);
