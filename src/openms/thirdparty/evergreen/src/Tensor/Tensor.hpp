@@ -213,7 +213,7 @@ public:
   const Vector<unsigned long> & data_shape() const {
     return _data_shape;
   }
-  const Vector<unsigned long> & view_shape() const {
+  const Vector<unsigned long> & view_shape() const {        
     return data_shape();
   }
   unsigned long flat_size() const {

@@ -125,6 +125,8 @@ namespace OpenMS
       gauss_.filter(smoothed_chrom);
     }
 
+    // läuft top
+    
     // Find initial seeds (peak picking)
     pp_.pick(smoothed_chrom, picked_chrom);
     OPENMS_LOG_DEBUG << "Picked " << picked_chrom.size() << " chromatographic peaks." << std::endl;
@@ -165,9 +167,9 @@ namespace OpenMS
     picked_chrom.getFloatDataArrays()[IDX_RIGHTBORDER].reserve(picked_chrom.size());
     for (Size i = 0; i < picked_chrom.size(); i++)
     {
-      picked_chrom.getFloatDataArrays()[IDX_ABUNDANCE].push_back(integrated_intensities_[i]);
-      picked_chrom.getFloatDataArrays()[IDX_LEFTBORDER].push_back((float)chromatogram[left_width_[i]].getRT());
-      picked_chrom.getFloatDataArrays()[IDX_RIGHTBORDER].push_back((float)chromatogram[right_width_[i]].getRT());
+      picked_chrom.getFloatDataArrays()[IDX_ABUNDANCE][i] = integrated_intensities_[i];
+      picked_chrom.getFloatDataArrays()[IDX_LEFTBORDER][i] = (float)chromatogram[left_width_[i]].getRT();
+      picked_chrom.getFloatDataArrays()[IDX_RIGHTBORDER][i] = (float)chromatogram[right_width_[i]].getRT();
     }
   }
 

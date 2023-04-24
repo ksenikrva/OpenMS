@@ -122,57 +122,51 @@ public:
       picked_chroms.resize(transition_group.getChromatograms().size());
       smoothed_chroms.resize(transition_group.getChromatograms().size());
       
-      // double timer_start = omp_get_wtime();
-      #pragma omp parallel
-      {
-        PeakPickerMRM picker_temp(picker_);
-        #pragma omp for
-        for (Size k = 0; k < transition_group.getChromatograms().size(); k++) // Pick fragment ion chromatograms
-        {
-          MSChromatogram& chromatogram = transition_group.getChromatograms()[k];
-          String native_id = chromatogram.getNativeID();
-
-          // only pick detecting transitions (skip all others)
-          if (transition_group.getTransitions().size() > 0 && 
-              transition_group.hasTransition(native_id)  && 
-              !transition_group.getTransition(native_id).isDetectingTransition() )
-          {
-            continue;
-          }
-
-          MSChromatogram picked_chrom, smoothed_chrom;
-          smoothed_chrom.setNativeID(native_id);
-          picker_temp.pickChromatogram(chromatogram, picked_chrom, smoothed_chrom);
-          picked_chrom.sortByIntensity();
-          picked_chroms[k] = std::move(picked_chrom);
-          smoothed_chroms[k] = std::move(smoothed_chrom);
-        }
-      }
-      // double timer_end = omp_get_wtime();
-      // std::cout << timer_end - timer_start << std::endl;      
-
-      // Pick precursor chromatograms      
+      // Pick precursor chromatograms
       if (use_precursors_)
       {
-        #ifdef _OPENMP
-        int in_parallel = omp_in_parallel();
-        #endif
-        #pragma omp parallel for if (in_parallel == 0)
-        for (Size k = 0; k < transition_group.getPrecursorChromatograms().size(); k++)
+        #pragma omp parallel num_threads(transition_group.getPrecursorChromatograms().size())
         {
-          SpectrumT picked_chrom, smoothed_chrom;
-          picked_chrom.reserve(transition_group.getPrecursorChromatograms().size());
-          smoothed_chrom.reserve(transition_group.getPrecursorChromatograms().size());
+          PeakPickerMRM picker_temp(picker_);
+          #pragma omp for
+          for (Size k = 0; k < transition_group.getPrecursorChromatograms().size(); k++)
+          {
+            SpectrumT& picked_chrom = picked_chroms[k];
+            SpectrumT& smoothed_chrom = smoothed_chroms[k];
+            SpectrumT& chromatogram = transition_group.getPrecursorChromatograms()[k];
 
-          SpectrumT& chromatogram = transition_group.getPrecursorChromatograms()[k];
-          PeakPickerMRM picker_temp = picker_;
-
-          picker_temp.pickChromatogram(chromatogram, picked_chrom, smoothed_chrom);
-          picked_chrom.sortByIntensity();
-          picked_chroms[k] = picked_chrom;
-          smoothed_chroms[k] = smoothed_chrom;
+            picker_temp.pickChromatogram(chromatogram, picked_chrom, smoothed_chrom);
+            picked_chrom.sortByIntensity();
+          }
         }
-      }
+      } 
+      else 
+      {
+        #pragma omp parallel num_threads(transition_group.getChromatograms().size())
+        {
+          PeakPickerMRM picker_temp(picker_);
+          #pragma omp for
+          for (Size k = 0; k < transition_group.getChromatograms().size(); k++) // Pick fragment ion chromatograms
+          {
+            MSChromatogram& chromatogram = transition_group.getChromatograms()[k];
+            String native_id = chromatogram.getNativeID();
+
+            // only pick detecting transitions (skip all others)
+            if (transition_group.getTransitions().size() > 0 && 
+              transition_group.hasTransition(native_id)  && 
+              !transition_group.getTransition(native_id).isDetectingTransition() )
+            {
+            continue;
+            }
+
+            MSChromatogram& picked_chrom = picked_chroms[k];
+            MSChromatogram& smoothed_chrom = smoothed_chroms[k];
+            smoothed_chrom.setNativeID(native_id);
+            picker_temp.pickChromatogram(chromatogram, picked_chrom, smoothed_chrom);
+            picked_chrom.sortByIntensity();
+          }
+        }
+      } 
 
       // Find features (peak groups) in this group of transitions.
       // While there are still peaks left, one will be picked and used to create

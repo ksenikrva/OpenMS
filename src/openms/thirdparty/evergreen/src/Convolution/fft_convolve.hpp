@@ -76,7 +76,6 @@ inline Tensor<double> fft_convolve_already_padded_rvalue(Tensor<double> && lhs_p
 
   Tensor<cpx> lhs_padded = Tensor<cpx>::create_reinterpreted(std::move(lhs_padded_doubles));
   Tensor<cpx> rhs_padded = Tensor<cpx>::create_reinterpreted(std::move(rhs_padded_doubles));
-
   apply_real_fft_packed<DIF, false, false, true>(lhs_padded);
   apply_real_fft_packed<DIF, false, false, true>(rhs_padded);
 
@@ -90,7 +89,6 @@ inline Tensor<double> fft_convolve_already_padded_rvalue(Tensor<double> && lhs_p
 
   // Unpack:
   Tensor<double> result = Tensor<double>::create_reinterpreted(std::move(lhs_padded));
-
   result.shrink(result_shape);
   return result;
 }

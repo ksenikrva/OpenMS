@@ -116,11 +116,13 @@ public:
 
     void processSpectrum_(MapType::SpectrumType& s) override
     {
+      std::cout << "spectrum filter" << std::endl;
       gf_.filter(s);
     }
 
     void processChromatogram_(MapType::ChromatogramType& c) override 
     {
+      std::cout << "chromatogram filter" << std::endl;
       gf_.filter(c);
     }
 
