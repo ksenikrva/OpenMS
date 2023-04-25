@@ -1,4 +1,8 @@
 #include <vector>
+#include <omp.h>
+#include <OpenMS/ANALYSIS/ID/SearchDatabase.h>
+#include <OpenMS/ANALYSIS/ID/SimpleSearchEngineAlgorithm.h>
+#include <OpenMS/METADATA/ProteinIdentification.h>
 #include <OpenMS/CONCEPT/ClassTest.h>
 #include <OpenMS/test_config.h>
 #include <OpenMS/CHEMISTRY/AASequence.h>
@@ -12,40 +16,29 @@
 
 using namespace OpenMS;
 using namespace std;
-
+/*
 class inner_Node
 {
 
   private:
 
-  Peak1D fragment_;
+  const AASequence* peptide_ptr_{};
 
-  const AASequence* peptide_ptr_;
+  Peak1D fragment_{};  
 
-  double prec_weight_;
+  double prec_weight_{};
 
-  double frag_weight_;
+  double frag_weight_{};
 
   public:
 
-  inner_Node() : peptide_ptr_(NULL), fragment_({}), prec_weight_(0), frag_weight_(0){}
+  inner_Node() = delete;
 
-  inner_Node(const Peak1D& fragment, const AASequence* peptide) : peptide_ptr_(peptide), fragment_(fragment), prec_weight_((*peptide).getMonoWeight()), frag_weight_(fragment.getMZ()){}
+  inner_Node(const AASequence* peptide, const Peak1D& fragment) : peptide_ptr_(peptide), fragment_(fragment), prec_weight_((*peptide).getMonoWeight()), frag_weight_(fragment.getMZ()){}
 
-  inner_Node(const inner_Node& n)
-  {
+  inner_Node(const inner_Node& n) = default; 
 
-    fragment_ = n.fragment_;
-
-    peptide_ptr_ = n.peptide_ptr_;
-
-    prec_weight_ = n.prec_weight_;
-
-    frag_weight_ = n.frag_weight_;
-
-  }
-
-  inner_Node(double prec_weight) : fragment_({}), peptide_ptr_(NULL), prec_weight_(prec_weight), frag_weight_(0){}
+  inner_Node(double prec_weight) : prec_weight_(prec_weight){}
 
   bool operator< (const inner_Node& r) const
   {
@@ -93,42 +86,24 @@ class outer_Node
 
   private:
 
-  std::set<inner_Node> nodes_;
+  std::set<inner_Node> nodes_{};
 
-  size_t size_;
+  size_t size_{};
 
-  double min_;
+  double min_{};
 
   public:
 
-  outer_Node()
-  {
+  outer_Node() = default;
 
-    nodes_ = {};
+  outer_Node(double min) : min_(min){}
 
-    size_ = 0;
-
-    min_ = 0;
-
-  }
-
-  outer_Node(double min) : nodes_({}), size_(0), min_(min){}
-
-  outer_Node(const outer_Node& n)
-  {
-
-    nodes_ = n.nodes_;
-
-    size_ = n.size_;
-
-    min_ = n.min_;
-
-  }
+  outer_Node(const outer_Node& n) = default;
 
   size_t getSize() const
   {
 
-    return nodes_.size();
+    return size_;
 
   }
 
@@ -150,11 +125,7 @@ class outer_Node
   void clear()
   {
 
-    nodes_ = {};
-
-    size_ = 0;
-
-    min_ = 0;
+    *this = {};
 
   }
 
@@ -237,21 +208,12 @@ class Tree
     return all_peptides;
   }
 
-  void frag_merge(const vector<int>& chunks, vector<Temp_frag>& input)
-  {
-    for (size_t i=0; i<chunks.size();i++)
-    {
-
-    }
-    
-  }
-
-  const std::vector<Temp_frag> generate_frag()
+  const std::set<Temp_frag> generate_frag()
   {
     TheoreticalSpectrumGenerator tsg;
     PeakSpectrum b_y_ions;
-    std::vector<Temp_frag> all_frags;
-    std::vector<int> chunk_start = {0};
+    std::set<Temp_frag> all_frags;
+
 
     // Bottleneck
     for(const auto& pep : all_peptides_)
@@ -264,32 +226,24 @@ class Tree
 
       for(const auto& frag : b_y_ions)
       {
-        all_frags.emplace_back(pep, frag); 
+        all_frags.insert({pep, frag}); 
       }
-      chunk_start.emplace_back(all_frags.size()-1);
       b_y_ions.clear(true);
       }
     }
-    
-    frag_merge(chunk_start, all_frags);
-
     return all_frags;
   }
 
   public:
 
-  Tree()
-  {
-    nodes_ = {};
-    size_ = 0;
-  }
+  Tree() = delete;
 
   Tree(std::string fastafile, std::string digestor_enzyme, size_t bucketsize){
 
 
     all_peptides_ = load_and_digest(fastafile, digestor_enzyme);
     
-    const std::vector<Temp_frag> all_frags = generate_frag();
+    const std::set<Temp_frag> all_frags = generate_frag();
     
     size_t i = 0;
     size_ = 0;
@@ -301,7 +255,7 @@ class Tree
       if(i < (bucketsize-1))
       {
         
-        inner_Node new_inner_node{frag.frag_, frag.prec_ptr_};
+        inner_Node new_inner_node{frag.prec_ptr_, frag.frag_};
 
         new_node.outer_Node::insert(new_inner_node);
         i++;
@@ -310,7 +264,7 @@ class Tree
       else
       {
 
-        inner_Node new_inner_node{frag.frag_, frag.prec_ptr_};
+        inner_Node new_inner_node{frag.prec_ptr_, frag.frag_};
 
         new_node.outer_Node::insert(new_inner_node);
         
@@ -381,32 +335,123 @@ class Tree
   }
 
 };
+*/
+
+// OpenMS::SearchDatabase sdb_test(std::vector<OpenMS::FASTAFile::FASTAEntry>{});
+
+void fragment_merge(int first, int last, const std::vector<int>& chunks, std::vector<int>& input)
+{
+  if(last-first > 1)
+  {
+    int mid = first + (last-first)/2;
+    // cout << first << ", " << mid << ", " << last << "\n";
+    #pragma omp parallel sections
+    {
+      #pragma omp section
+      fragment_merge(first, mid, chunks, input);
+      #pragma omp section
+      fragment_merge(mid, last, chunks, input);
+    }
+    std::inplace_merge(input.begin() + chunks[first], input.begin() + chunks[mid], input.begin() + chunks[last]);
+  }
+}
 
 int main(){
+  
+  FASTAFile file;
+  vector<FASTAFile::FASTAEntry> entries;
+  file.load("/buffer/ag_bsc/pmsb_23/data/sage/uniprot-SPTR_human_plusCont_FWBW.fasta", entries);
+  //file.load("/buffer/ag_bsc/pmsb_23/max_alcer/sage/tests/Q99536.fasta", entries);
+  cout << "Entires: " << entries.size() << "\n";
+  
+  double start;
+  double end;
 
-  Tree test("/buffer/ag_bsc/pmsb_23/heike/fasta_testing/philosopher/test/db/uniprot/hsa-reviewed-2019-02-04.fasta", "Trypsin", 16);
-  // Tree test("/buffer/ag_bsc/pmsb_23/max_alcer/sage/tests/Q99536.fasta", "Trypsin", 16);
-  vector<AASequence> candidates;
+  start = omp_get_wtime();
+  SearchDatabase sdb(entries);
+  end = omp_get_wtime();
+
+  cout << "construction time: " << end - start << "\n"; 
 
   MzMLFile f;
 
   MSExperiment exp;
 
-  f.load("/buffer/ag_bsc/pmsb_23/max_alcer/sage/tests/LQSRPAAPPAPGPGQLTLR.mzML", exp);
+  vector<pair<vector<SearchDatabase::Candidate>, size_t>> candidates;
 
-  test.search(*exp.begin(), 0.01, candidates);
+  //vector<SearchDatabase::Candidate> candidates;
 
-  //Tree test("/buffer/ag_bsc/pmsb_23/max_alcer/OpenMS/src/tests/class_tests/openms/data/Sequest_test2.fasta", "Trypsin", 16);
-/*
-  outer_Node test_o = test.test_return();
+  f.load("/buffer/ag_bsc/pmsb_23/data/sage/centroided_Ms1andMs2.mzML", exp);
+  //f.load("/buffer/ag_bsc/pmsb_23/max_alcer/sage/tests/LQSRPAAPPAPGPGQLTLR.mzML", exp);
+
+  start = omp_get_wtime();
+  sdb.search(exp, candidates);
+  end = omp_get_wtime();
+
+  cout << "search time: " << end - start << "\n";
+  int sum = 0;
+  for (auto& i : candidates){
+
+    sum += i.first.size();
+
+  }
+  cout << "Erg: " << sum << "\n"; 
+  /*
+
+  SearchDatabase sdb({{"test", "test",
+   "GSMTVDMQEIGSTEMPYEVPTQPNATSASAGRGWFDGPSFKVPSVPTRPSGIFRRPSRIKPEFSFKEKVSELVSPAVYTFGLFVQNASESLTSDDP"}});
+
+  for (auto i : sdb.all_peptides_)
+  {
+    cout << i.sequence_ << "\n";
+  }
+
   cout << "\n";
-  for(auto i : test_o.getNodes()){
-    
-    cout << i.getprecWeight() << "\n";
 
-  } */
+  for (auto h : sdb.bucket_frags_mz_)
+  {
+    cout << h << " ";
+  }
 
-  // std::cout << candidates[0].toString() << " " << candidates[1].toString() << std::endl;
+  cout << "\n";
+  cout << "\n";
+
+  int counter = 0;
+
+  for (auto j : sdb.all_fragments_)
+  { 
+    if(counter == sdb.bucketsize_)
+    {
+      cout << "\n";
+      counter = 0;
+    }
+
+    cout << j.fragment_mz_ << " " << sdb.all_peptides_[j.peptide_index_].peptide_mz_ << "\n";
+
+    counter++;
+  }
+
+  MSSpectrum spec;
+
+  Precursor prec{};
+
+  prec.setCharge(1);
+
+  prec.setMZ(1039.48);
+
+  spec.setPrecursors({prec});
+
+  spec.push_back({391.176, 100});
+
+  vector<SearchDatabase::Candidate> candidates;
+
+  sdb.search(spec, candidates);
+
+  for(auto c : candidates)
+  {
+    cout << *c.sequence_ << "\n ";
+  }  
+  */
   return 0;
 
 }
