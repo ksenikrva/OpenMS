@@ -1,14 +1,52 @@
+// --------------------------------------------------------------------------
+//                   OpenMS -- Open-Source Mass Spectrometry
+// --------------------------------------------------------------------------
+// Copyright The OpenMS Team -- Eberhard Karls University Tuebingen,
+// ETH Zurich, and Freie Universitaet Berlin 2002-2022.
+//
+// This software is released under a three-clause BSD license:
+//  * Redistributions of source code must retain the above copyright
+//    notice, this list of conditions and the following disclaimer.
+//  * Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimer in the
+//    documentation and/or other materials provided with the distribution.
+//  * Neither the name of any author or any participating institution
+//    may be used to endorse or promote products derived from this software
+//    without specific prior written permission.
+// For a full list of authors, refer to the file AUTHORS.
+// --------------------------------------------------------------------------
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL ANY OF THE AUTHORS OR THE CONTRIBUTING
+// INSTITUTIONS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+// EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+// OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+// WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+// OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+// ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//
+// --------------------------------------------------------------------------
+// $Maintainer: $
+// $Authors: Max Alcer, Heike Einsfeld $
+// --------------------------------------------------------------------------
+
+
 #include <OpenMS/ANALYSIS/ID/SearchDatabase.h>
 
-//#include <OpenMS/DATASTRUCTURES/DefaultParamHandler.h>
 #include <OpenMS/CHEMISTRY/AAIndex.h>
 #include <OpenMS/CHEMISTRY/AASequence.h>
+#include <OpenMS/CHEMISTRY/ProteaseDB.h>
 #include <OpenMS/CHEMISTRY/ProteaseDigestion.h>
 #include <OpenMS/CHEMISTRY/TheoreticalSpectrumGenerator.h>
+#include <OpenMS/DATASTRUCTURES/DefaultParamHandler.h>
+#include <OpenMS/DATASTRUCTURES/Param.h>
 #include <OpenMS/FORMAT/FASTAFile.h>
 #include <OpenMS/FORMAT/MzMLFile.h>
 #include <OpenMS/KERNEL/MSExperiment.h>
 #include <OpenMS/KERNEL/Peak1D.h>
+#include <OpenMS/MATH/MISC/MathFunctions.h>
 
 #include <omp.h>
 #include <unordered_set>
@@ -18,16 +56,15 @@ using namespace std;
 
 namespace OpenMS
 {
-  
-std::vector<SearchDatabase::Peptide> SearchDatabase::generate_peptides_(const std::vector<FASTAFile::FASTAEntry>& entries) const
+std::vector<SearchDatabase::Peptide_> SearchDatabase::generate_peptides_(const std::vector<FASTAFile::FASTAEntry>& entries) const
 {
-  vector<SearchDatabase::Peptide> all_peptides;
+  vector<SearchDatabase::Peptide_> all_peptides;
   #pragma omp parallel
   { 
     ProteaseDigestion digestor;
     digestor.setEnzyme(digestor_enzyme_);
     digestor.setMissedCleavages(missed_cleavages_);
-    vector<SearchDatabase::Peptide> all_peptides_pvt;
+    vector<SearchDatabase::Peptide_> all_peptides_pvt;
     #pragma omp for nowait
     for (size_t i = 0; i < entries.size(); i++)
     {
@@ -36,29 +73,27 @@ std::vector<SearchDatabase::Peptide> SearchDatabase::generate_peptides_(const st
       
       for (const auto& pep : peptides)
       { 
-        if(pep.toString().find('X') != string::npos) continue;
+        if (pep.toString().find('X') != string::npos) continue; // filtering peptide with unknown AA, can't calculate MonoWeight
 
         double seq_mz = pep.getMonoWeight();
 
-        if(seq_mz < peptide_min_mass_ || seq_mz > peptide_max_mass_) continue;
+        if (!Math::contains(seq_mz, peptide_min_mass_, peptide_max_mass_)) continue;
 
         all_peptides_pvt.emplace_back(pep, i, seq_mz);
         
-      }      
-
+      }
     }
     #pragma omp critical (add_critical)
     all_peptides.insert(all_peptides.end(), all_peptides_pvt.begin(), all_peptides_pvt.end());
   }
-    return all_peptides;
+  return all_peptides;
 }
 
-void SearchDatabase::fragment_merge_(int first, int last, const std::vector<int>& chunks, std::vector<SearchDatabase::Fragment>& input) const
+void SearchDatabase::fragment_merge_(int first, int last, const std::vector<int>& chunks, std::vector<SearchDatabase::Fragment_>& input) const
 {
-  if(last - first > 1)
+  if (last - first > 1)
   {
-    int mid = first + (last-first)/2;
-    // cout << first << ", " << mid << ", " << last << "\n";
+    int mid = first + (last-first) / 2;
     #pragma omp parallel sections
     {
       #pragma omp section
@@ -67,24 +102,24 @@ void SearchDatabase::fragment_merge_(int first, int last, const std::vector<int>
       SearchDatabase::fragment_merge_(mid, last, chunks, input);
     }
     std::inplace_merge(input.begin() + chunks[first], input.begin() + chunks[mid], input.begin() + chunks[last], 
-    [](const  SearchDatabase::Fragment& l, const  SearchDatabase::Fragment& r)->bool
-    {return (l.fragment_mz_ < r.fragment_mz_);});
+    [&](const  SearchDatabase::Fragment_& l, const  SearchDatabase::Fragment_& r)-> bool
+    {return (tie(l.fragment_mz_, all_peptides_[l.peptide_index_].peptide_mz_) < tie(r.fragment_mz_, all_peptides_[r.peptide_index_].peptide_mz_));});
   }
 }
 
-std::vector<SearchDatabase::Fragment> SearchDatabase::generate_fragments_() const
+std::vector<SearchDatabase::Fragment_> SearchDatabase::generate_fragments_() const
 {
   TheoreticalSpectrumGenerator tsg;
   PeakSpectrum b_y_ions;
-  std::vector<Fragment> all_frags;
-  std::vector<int> chunk_start = {0};    
+  std::vector<Fragment_> all_frags;
+  std::vector<int> chunk_start = {0}; //for fragment_merge need start and end of presorted chunks
     
-  for(size_t i = 0; i < all_peptides_.size(); i++)
+  for (size_t i = 0; i < all_peptides_.size(); i++)
   { 
     tsg.getSpectrum(b_y_ions, all_peptides_[i].sequence_, 1, 1);      
-    for(const auto& frag : b_y_ions)
+    for (const auto& frag : b_y_ions)
     { 
-      if (frag.getMZ() < fragment_min_mz_ || frag.getMZ() > fragment_max_mz_) continue;
+      if (!Math::contains(frag.getMZ(), fragment_min_mz_, fragment_max_mz_)) continue;
       all_frags.emplace_back(i, frag);        
     }
     chunk_start.emplace_back(all_frags.size());
@@ -92,69 +127,86 @@ std::vector<SearchDatabase::Fragment> SearchDatabase::generate_fragments_() cons
   }
 
   SearchDatabase::fragment_merge_(0, chunk_start.size()-1, chunk_start, all_frags);
-
-  cout << is_sorted(all_frags.begin(), all_frags.end(), 
-  [](const  SearchDatabase::Fragment& l, const  SearchDatabase::Fragment& r)->bool
-  {return (l.fragment_mz_ < r.fragment_mz_);}) << "\n";
-   
+  
   return all_frags;
 }
 
-SearchDatabase::SearchDatabase(const std::vector<FASTAFile::FASTAEntry>& entries)
+SearchDatabase::SearchDatabase(const std::vector<FASTAFile::FASTAEntry>& entries, size_t bucketsize) : DefaultParamHandler("SearchDatabase")
 { 
-  digestor_enzyme_ = "Trypsin";
-  missed_cleavages_ = 0;
-  peptide_min_mass_ = 500;
-  peptide_max_mass_ = 5000;
-  peptide_min_length_ = 5;
-  peptide_max_length_ = 50;
-  fragment_min_mz_ = 150;
-  fragment_max_mz_ = 2000;
-  bucketsize_ = 500000;
-  precursor_mz_tolerance_ = 1;
-  precursor_mz_tolerance_unit_ = "Da";
-  fragment_mz_tolerance_ = 0.05;
-  fragment_mz_tolerance_unit_ = "Da";
+  vector<String> all_enzymes;
+  ProteaseDB::getInstance()->getAllNames(all_enzymes);
+  defaults_.setValue("digestor_enzyme", "Trypsin", "Enzyme for digestion");
+  defaults_.setValidStrings("digestor_enzyme", ListUtils::create<std::string>(all_enzymes));
+  defaults_.setValue("missed_cleavages", 0, "missed cleavages for digestion");
+  defaults_.setValue("peptide_min_mass", 500, "minimal peptide mass for database");
+  defaults_.setValue("peptide_max_mass", 5000, "maximal peptide mass for database");
+  defaults_.setValue("peptide_min_length", 5, "minimal peptide length for database");
+  defaults_.setValue("peptide_max_length", 50, "maximal peptide length for database");
+  defaults_.setValue("fragment_min_mz", 150, "minimal fragment mz for database");
+  defaults_.setValue("fragment_max_mz", 2000, "maximal fragment mz for database");
+  defaults_.setValue("precursor_mz_tolerance", 2, "tolerance for precursor-MZ in search");
+  defaults_.setValue("fragment_mz_tolerance", 0.05, "tolerance for fragment-MZ in search");
+
+  //precursor_mz_tolerance_unit_ = "Da";
+
+  //fragment_mz_tolerance_unit_ = "Da";
+
+  defaultsToParam_();
+
+  if (entries.size() == 0) return;
 
   all_peptides_ = generate_peptides_(entries);
 
   all_fragments_ = generate_fragments_();
+  
+  // bucketsize_ = size_t(sqrt(all_fragments_.size())); //calculating bucketsize for balanced tree (performance)
 
-  for(size_t i = 0; i < all_fragments_.size(); i += bucketsize_)
+  bucketsize_ = bucketsize;
+
+  for (size_t i = 0; i < all_fragments_.size(); i += bucketsize_)
   {
     bucket_frags_mz_.emplace_back(all_fragments_[i].fragment_mz_);
   }
   #pragma omp parallel
   {
+    // sorting the fragments of each bucket by the precursor-MZ
     #pragma omp for
-    for(size_t i = 0; i < all_fragments_.size(); i += bucketsize_)
-    {
-      if (i+bucketsize_ > all_fragments_.size())
-      {
-        sort(all_fragments_.begin()+i, all_fragments_.end(), 
-        [&](const SearchDatabase::Fragment& l, const SearchDatabase::Fragment& r)->bool 
-        {return (all_peptides_[l.peptide_index_].peptide_mz_ < all_peptides_[r.peptide_index_].peptide_mz_);});
-      }
-      else
-      {
-        sort(all_fragments_.begin()+i, all_fragments_.begin()+i+bucketsize_, 
-        [&](const SearchDatabase::Fragment& l, const SearchDatabase::Fragment& r)->bool 
-        {return (all_peptides_[l.peptide_index_].peptide_mz_ < all_peptides_[r.peptide_index_].peptide_mz_);});
-      }
+    for (size_t i = 0; i < all_fragments_.size(); i += bucketsize_)
+    { 
+      auto bucket_begin = all_fragments_.begin()+i;
+      auto condition = distance(all_fragments_.begin(), bucket_begin+bucketsize_) >= int(all_fragments_.size());
+
+      sort(bucket_begin, condition ? all_fragments_.end() : bucket_begin+bucketsize_, 
+      [&](const SearchDatabase::Fragment_& l, const SearchDatabase::Fragment_& r) -> bool 
+      {return (all_peptides_[l.peptide_index_].peptide_mz_ < all_peptides_[r.peptide_index_].peptide_mz_);});
     }
   }
-  cout << "Buckets: " << bucket_frags_mz_.size() << "\n";
+}
 
+void SearchDatabase::updateMembers_()
+{
+  digestor_enzyme_ = param_.getValue("digestor_enzyme").toString();
+  missed_cleavages_ = param_.getValue("missed_cleavages");
+  peptide_min_mass_ = param_.getValue("peptide_min_mass");
+  peptide_max_mass_ = param_.getValue("peptide_max_mass");
+  peptide_min_length_ = param_.getValue("peptide_min_length");
+  peptide_max_length_ = param_.getValue("peptide_max_length");
+  fragment_min_mz_ = param_.getValue("fragment_min_mz");
+  fragment_max_mz_ = param_.getValue("fragment_max_mz");
+  precursor_mz_tolerance_ = param_.getValue("precursor_mz_tolerance");
+  fragment_mz_tolerance_ = param_.getValue("fragment_mz_tolerance");
 }
 
 void SearchDatabase::search(MSSpectrum& spectrum, std::vector<SearchDatabase::Candidate>& candidates) const
-{
+{ 
   candidates.clear();
-  unordered_set<size_t> index_hash;
+  if (spectrum.size() == 0) return;
+  
+  unordered_set<size_t> index_hash; // saving every candidate only once
 
   std::vector<Precursor> precursor = spectrum.getPrecursors();
 
-  if(precursor.size() != 1) return;
+  if (precursor.size() != 1) return;
 
   double prec_mz = precursor[0].getUnchargedMass();
 
@@ -162,31 +214,41 @@ void SearchDatabase::search(MSSpectrum& spectrum, std::vector<SearchDatabase::Ca
   size_t count_found = 0;
   size_t count_rounds = 0;
 
-  for(const auto& peak : spectrum)
-  {       
-    if (count_found == 0 && count_rounds == 5) return;
+  for (const auto& peak : spectrum)
+  {
+    if (count_found == 0 && count_rounds == 5) return; // if peak with the 5 highest intensity don't match, skip whole spectrum
 
     auto itr_lower = lower_bound(bucket_frags_mz_.begin(), bucket_frags_mz_.end(), peak.getMZ() - fragment_mz_tolerance_);
     
     size_t index_lower = distance(bucket_frags_mz_.begin(), itr_lower);
-    if(index_lower != 0) index_lower--;
+    if (index_lower != 0) index_lower--; // lower bound returns one too high (because searching the minimum of each bucket)
+
     while (bucket_frags_mz_[index_lower] <= (peak.getMZ() + fragment_mz_tolerance_) && index_lower < bucket_frags_mz_.size())
-    {
-      auto itr_lower_inner = lower_bound(all_fragments_.begin()+(index_lower*bucketsize_), all_fragments_.begin()+(index_lower*bucketsize_) + bucketsize_ -1, prec_mz - precursor_mz_tolerance_,
-      [&](const SearchDatabase::Fragment& r, double l)->bool 
-      {return (all_peptides_[r.peptide_index_].peptide_mz_ < l);});
-      if(itr_lower_inner != all_fragments_.begin()+(index_lower*bucketsize_))--itr_lower_inner;
-      auto itr_upper_inner = all_fragments_.begin() + (index_lower*bucketsize_) + bucketsize_ - 1;
-      while(all_peptides_[(*itr_lower_inner).peptide_index_].peptide_mz_ <= (prec_mz + precursor_mz_tolerance_) && itr_lower_inner != itr_upper_inner)
+    { 
+      auto bucket_start = all_fragments_.begin() + (index_lower * bucketsize_);
+      auto bucket_end = all_fragments_.begin() + (index_lower + 1) * bucketsize_;
+
+      auto condition = distance(all_fragments_.begin(), bucket_end) >= int(all_fragments_.size());
+
+      auto itr_lower_inner = lower_bound(bucket_start, condition ? all_fragments_.end() : bucket_end, prec_mz - precursor_mz_tolerance_,
+      [&](const SearchDatabase::Fragment_& r, double l) {
+      return (all_peptides_[r.peptide_index_].peptide_mz_ < l);
+      });
+
+      while (all_peptides_[(*itr_lower_inner).peptide_index_].peptide_mz_ <= (prec_mz + precursor_mz_tolerance_) && itr_lower_inner != bucket_end && itr_lower_inner != all_fragments_.end())
       { 
-        if(peak.getMZ() < (*itr_lower_inner).fragment_mz_ - fragment_mz_tolerance_ || peak.getMZ() > (*itr_lower_inner).fragment_mz_ + fragment_mz_tolerance_) continue;
+        // filter by matching fragment-MZ
+        if (!Math::contains(peak.getMZ(), (*itr_lower_inner).fragment_mz_ - fragment_mz_tolerance_, (*itr_lower_inner).fragment_mz_ + fragment_mz_tolerance_)) 
+        {
+          ++itr_lower_inner;
+          continue;
+        }
         index_hash.insert((*itr_lower_inner).peptide_index_);
         ++itr_lower_inner;
         count_found++;
       }
       index_lower++;
-    }
-    cout << "\n";
+    }    
     count_rounds++;
   }
   
@@ -194,65 +256,23 @@ void SearchDatabase::search(MSSpectrum& spectrum, std::vector<SearchDatabase::Ca
   {
     candidates.emplace_back(&all_peptides_[j].sequence_, all_peptides_[j].protein_index_);
   }
-
 }
 
 void SearchDatabase::search(MSExperiment& experiment, std::vector<std::pair<std::vector<Candidate>, size_t>>& candidates) const
 {
   candidates.clear();
+  if (experiment.size() == 0) return;  
   
   #pragma omp parallel
   { 
     #pragma omp for 
     for (size_t i = 0; i < experiment.size(); i++)
-    { 
-      unordered_set<size_t> index_hash;
+    {
+      if (experiment[i].size() == 0) continue;
+
       vector<Candidate> temp_cand;
-      vector<Precursor> precursor = experiment[i].getPrecursors();
-
-      if(precursor.size() != 1) continue;
-
-      double prec_mz = precursor[0].getUnchargedMass();
-      experiment[i].sortByIntensity(true);      
-      size_t count_found = 0;
-      size_t count_rounds = 0;
-
-      for(const auto& peak : experiment[i])
-      {        
-        if (count_found == 0 && count_rounds == 5) break;
-
-        auto itr_lower = lower_bound(bucket_frags_mz_.begin(), bucket_frags_mz_.end(), peak.getMZ() - fragment_mz_tolerance_);
-        size_t index_lower = distance(bucket_frags_mz_.begin(), itr_lower);
-        if(index_lower != 0) index_lower--;
-        while (bucket_frags_mz_[index_lower] <= (peak.getMZ() + fragment_mz_tolerance_) && index_lower < bucket_frags_mz_.size())
-        {
-          auto itr_lower_inner = lower_bound(all_fragments_.begin()+(index_lower*bucketsize_), all_fragments_.begin()+(index_lower*bucketsize_) + bucketsize_ -1, prec_mz - precursor_mz_tolerance_,
-          [&](const SearchDatabase::Fragment& r, double l)->bool {return (all_peptides_[r.peptide_index_].peptide_mz_ < l);});
-          if(itr_lower_inner != all_fragments_.begin()+(index_lower*bucketsize_)) --itr_lower_inner;
-          auto itr_upper_inner = all_fragments_.begin() + index_lower*bucketsize_ + bucketsize_-1;
-
-          while(all_peptides_[(*itr_lower_inner).peptide_index_].peptide_mz_ <= (prec_mz + precursor_mz_tolerance_) && itr_lower_inner != itr_upper_inner)
-          {   
-            if((peak.getMZ() < (*itr_lower_inner).fragment_mz_ - fragment_mz_tolerance_) || (peak.getMZ() > (*itr_lower_inner).fragment_mz_ + fragment_mz_tolerance_))
-            {
-              ++itr_lower_inner;
-              continue;
-            }
-
-            index_hash.insert((*itr_lower_inner).peptide_index_);
-            ++itr_lower_inner;
-            count_found++;
-          }
-          index_lower++;
-
-        }
-        count_rounds++;
-      }      
-
-      for (size_t j : index_hash)
-      {
-        temp_cand.emplace_back(&all_peptides_[j].sequence_, all_peptides_[j].protein_index_);
-      }
+      
+      SearchDatabase::search(experiment[i], temp_cand);
 
       #pragma omp critical (add_critical)
       {
