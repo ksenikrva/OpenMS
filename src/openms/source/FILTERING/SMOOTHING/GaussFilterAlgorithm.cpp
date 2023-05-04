@@ -77,7 +77,7 @@ namespace OpenMS
       std::vector<double> temp = coeffs_;
       std::reverse(coeffs_.begin(), coeffs_.end());
       coeffs_.insert(coeffs_.end(), temp.begin(), temp.end());
-      // member?
+      // member?      
     }
   }
 

@@ -203,11 +203,6 @@ namespace OpenMS
         act_snt_r1 = snt.getSignalToNoise(i + 1);
       }
 
-      std::cout << "central: " << central_peak_int << ", left: " << left_neighbor_int << ", right: " << right_neighbor_int << std::endl;    // fast nie
-      // std::cout << "signal:" << signal_to_noise_ /* = 1 */ << ", snt:" << act_snt << ", left:" << act_snt_l1 << ", right:" << act_snt_r1 << std::endl;   // meist ganz gut
-      // std::cout << check_spacings /* = 0 */ << std::endl;
-      // std::cout << "peak_int: " << ((central_peak_int > left_neighbor_int) && (central_peak_int > right_neighbor_int)) << " ";
-      // std::cout << "act_snt: " << ((act_snt >= signal_to_noise_) && (act_snt_l1 >= signal_to_noise_) && (act_snt_r1 >= signal_to_noise_)) << std::endl;
       // look for peak cores meeting MZ and intensity/SNT criteria
       if ((central_peak_int > left_neighbor_int) && 
         (central_peak_int > right_neighbor_int) && 
@@ -260,7 +255,6 @@ namespace OpenMS
         }
 
         // peak core found, now extend it
-        std::cout << "peak core found --> extending..." << std::endl;
         // to the left
         Size k = 2;
 
@@ -346,7 +340,6 @@ namespace OpenMS
           right_boundary = i + k;
           ++k;
         }
-        std::cout << "extending done" << std::endl;
 
         // skip if the minimal number of 3 points for fitting is not reached
         if (peak_raw_data.size() < 3)

@@ -41,6 +41,7 @@
 #include <cmath>
 #include <vector>
 #include <numeric>      // Reihenfolge TODO
+#include <stdio.h>
 
 namespace OpenMS
 {
@@ -82,7 +83,6 @@ public:
     */
     bool filter(OpenMS::Interfaces::SpectrumPtr spectrum)
     {
-      std::cout << "spectrum filter" << std::endl;
       // create new arrays for mz / intensity data and set their size
       OpenMS::Interfaces::BinaryDataArrayPtr intensity_array(new OpenMS::Interfaces::BinaryDataArray);
       OpenMS::Interfaces::BinaryDataArrayPtr mz_array(new OpenMS::Interfaces::BinaryDataArray);
@@ -107,7 +107,6 @@ public:
     */
     bool filter(OpenMS::Interfaces::ChromatogramPtr chromatogram)
     {
-      std::cout << "chromatogram filter" << std::endl;
       // create new arrays for rt / intensity data and set their size
       OpenMS::Interfaces::BinaryDataArrayPtr intensity_array(new OpenMS::Interfaces::BinaryDataArray);
       OpenMS::Interfaces::BinaryDataArrayPtr rt_array(new OpenMS::Interfaces::BinaryDataArray);
@@ -134,149 +133,154 @@ public:
     */
     template <typename ConstIterT, typename IterT>
     bool filter(
-        ConstIterT mz_in_start,     // rt oder mz --> in die Irre führende Benennung
+        ConstIterT mz_in_start,
         ConstIterT mz_in_end,
         ConstIterT int_in_start,
         IterT mz_out,
-        IterT int_out) const
+        IterT int_out)
     {
       bool found_signal = false;
       
       ConstIterT int_it = int_in_start;
       ConstIterT mz_it = mz_in_start;
-
-      evergreen::Tensor<double> gaussian_data({coeffs_.size()});      // Problem: gaussian_data.size() != intensities_data.size() --> zu groß!!!
-      // normalize the gaussian coefficients to scale the intensities correctly
-      bool divide_by_sum = false;
-      for (unsigned i = 0; i < coeffs_.size() - 1; i++)
-      {
-        if (coeffs_[i] >= 1 && coeffs_[i + 1] != 0)
-        {
-          divide_by_sum = true;
-          break;
-        }
-      }
-
-      if (divide_by_sum)
-      {
-        double sum = std::accumulate(coeffs_.begin(), coeffs_.end(), 0);
-        // mapping function
-        for (long unsigned i = 0; i < coeffs_.size(); i++)
-        {
-          gaussian_data[i] = coeffs_[i]/ sum;
-        }
-      } 
-      else
-      {
-        for (long unsigned i = 0; i < coeffs_.size(); i++)
-        {
-          gaussian_data[i] = coeffs_[i];
-        }
-      }
-
-      // Die zu glättenden Daten
-      evergreen::Tensor<double> intensities_data({mz_in_end - mz_in_start});
-      /*
-      if ((mz_in_end - mz_in_start) < coeffs_.size())
-      {
-        evergreen::Tensor<double> intensities_data_temp({coeffs_.size()});
-        for (long int i = 0; i < coeffs_.size(); i++)
-        {
-          if (i <= ((coeffs_.size() - 1)/ 4) || i >= (coeffs_.size() - ((coeffs_.size() - 1)/ 4)))
+      // if ppm tolerance is used, calculate a reasonable width value for this m/z
+        if (use_ppm_tolerance_)
+        { 
+          for (; mz_it != mz_in_end; mz_it++, int_it++)
           {
-            intensities_data_temp[i] = 0;
+            initialize((*mz_it) * ppm_tolerance_ * 10e-6, spacing_, ppm_tolerance_, use_ppm_tolerance_ ); 
+          
+            double new_int = integrate_(mz_it, int_it, mz_in_start, mz_in_end);
+        
+            // store new intensity and m/z into output iterator
+            *mz_out = *mz_it;
+            *int_out = new_int;
+            ++mz_out;
+            ++int_out;
+
+            if (new_int != 0) found_signal = true;
           }
-          else 
-          {
-            intensities_data_temp[i] = *int_it;
-            int_it++;
-          }
-          intensities_data = intensities_data_temp;
         }
-      } 
-      else
-      {
-        */
-        for (long int i = 0; i < (mz_in_end - mz_in_start); i++, int_it++)      // cursed  an einigen Stellen??? --> nach convolve noch da
+        else 
         {
-          intensities_data[i] = *int_it;
-        }
-      //}
+          evergreen::Tensor<double> gaussian_data({coeffs_.size()});
 
-      /*
-      std::vector<double> a = {0.25, 0.5, 0.25};
-      evergreen::Tensor<double> gaussian_data({a.size()});
-      for (int i = 0; i < a.size(); i++)
-      {
-        gaussian_data[i] = a[i];
+          // normalize the gaussian coefficients to scale the intensities correctly
+          double sum = std::accumulate(coeffs_.begin(), coeffs_.end(), 0.0);
+          if (sum != 1.0)
+          {
+            for (long unsigned i = 0; i < coeffs_.size(); i++)
+            {
+              gaussian_data[i] = coeffs_[i] / sum;
+            }
+          } 
+          else
+          {
+            for (long unsigned i = 0; i < coeffs_.size(); i++)
+            {
+              gaussian_data[i] = coeffs_[i];
+            }
+          }
+
+          // saving the spacing_ nearest mz values in the same bin (binning)
+          std::vector<int> bin_numbers = {};
+          evergreen::Tensor<double> bins({(double(*(mz_in_end - 1) - *mz_in_start) / spacing_) + 1.0});
+          binning(bins, bin_numbers, mz_in_start, mz_in_end, int_it);
+
+          //Fast Fourier Transformation from evergreen
+          evergreen::Tensor<double> out_fft = evergreen::fft_convolve(bins, gaussian_data);
+          
+          mz_it = mz_in_start;
+          int_it = int_in_start;
+
+          out_fft = debinning(out_fft, bin_numbers, mz_in_start, mz_in_end, int_it);
+
+          mz_it = mz_in_start;
+          int_it = int_in_start;
+
+          //cutting off the access data that was calculated by convolve
+          for (int i = ((out_fft.flat_size() - bins.flat_size())/ 2); mz_it != mz_in_end; mz_it++, int_it++, i++)
+          {
+            *mz_out = *mz_it;
+            *int_out = out_fft[i];
+            ++mz_out;
+            ++int_out;
+
+            if (out_fft[i] != 0) found_signal = true;
+          }
       }
-
-      std::vector<double> b = {0.0, 0.0, 1.0, 0.0, 0.0};
-      evergreen::Tensor<double> intensities_data({b.size()});
-      for (int i = 0; i < b.size(); i++)
-      {
-        intensities_data[i] = b[i];
-      }*/
-
-      mz_it = mz_in_start;
-      int_it = int_in_start;
-
-      //Fast Fourier Transformation from evergreen
-      evergreen::Tensor<double> out_fft = evergreen::fft_convolve(intensities_data, gaussian_data);   // size() = i_data.size() + g_data.size() - 1
-                                                                                                      // - (out_fft.size() - 1)/ 2 
-                                                                                                      // --> (i.size() + g.size() - 2)/ 2
-                                                                                                      // --> i.size() - 1
-
-      
-      for (int i = ((out_fft.flat_size() - 1)/ ((out_fft.flat_size() - (mz_in_end - mz_in_start) - 1))) + 1; mz_it != mz_in_end; mz_it++, int_it++, i++)    // erase (N-1)/2 Enden am Anfang und am Ende --> size() = i.size() - 1
-                                                                                                  // --> i.size() (- 1) = mz_in_end - mz_in_start (- 1)
-                                                                                                  // --> mz_it (mz_in_start) <= mz_in_end (- 1)
-      {
-        // if (i >= (out_fft.flat_size() - (out_fft.flat_size() - 1)/ ((out_fft.flat_size() - (mz_in_end - mz_in_start) - 1)/ 2))) break;    // geht sobald | gilt ... tut es nicht... :/
-        *mz_out = *mz_it;
-        if (out_fft[i] < 0) out_fft[i] = 0;
-        *int_out = out_fft[i];
-        ++mz_out;
-        ++int_out;
-
-        if (out_fft[i] != 0) found_signal = true;
-      }
-
-    //i luv u pls work
-    /*
-     for (int i = ((out_fft.flat_size() - 1)/ 4); i < (out_fft.flat_size() - (out_fft.flat_size() - 1)/ 4); i++)
-      {
-        if (out_fft[i] != 0) found_signal = true;
-      }
-    */
       return found_signal;
     }
 
 
     void initialize(double gaussian_width, double spacing, double ppm_tolerance, bool use_ppm_tolerance);
 
+    template <typename ConstIterT, typename DataPackage, typename BinPosPackage>
+    void binning(DataPackage& bins, BinPosPackage& bin_numbers, ConstIterT mz_it, ConstIterT mz_end, ConstIterT int_it) const
+    {
+      double start = *mz_it;
+      unsigned j = 0;
+      for (unsigned i = 0; mz_it != mz_end; j++)
+      {
+        if (*mz_it < (start + (i + 1) * spacing_))
+        {
+          bins[i] += *int_it;
+          int_it++;
+          mz_it++;
+          bin_numbers.push_back(1);
+
+          continue;
+        }
+
+        i++;
+        bin_numbers.push_back(0);
+      }
+    }
+
+
+    template <typename ConstIterT, typename DataPackage, typename BinPosPackage>
+    DataPackage debinning(DataPackage& out_fft, BinPosPackage& bin_numbers, ConstIterT mz_it, ConstIterT mz_end, ConstIterT int_it) const
+    {
+      unsigned start_bin = 0;
+      unsigned end_bin = 0;
+      for (unsigned i = 0; i < out_fft.flat_size() - 1; i++)
+      {
+        // search for bin with original data
+        if (bin_numbers[i] != 0)
+        {
+          end_bin = i;
+        }
+        else 
+        {
+          end_bin++;
+          continue;
+        }
+
+        // adding the values in the [start_bin, end_bin] interval (while considering the distance to the start_bin and end_bin peaks)
+        unsigned j = start_bin + 1;
+        while (j != end_bin)
+        {
+          out_fft[end_bin] += out_fft[j] * ((1.0 - double(end_bin - j)) / double(end_bin - start_bin));
+          out_fft[start_bin] += out_fft[j] * ((1.0 - double(j - start_bin)) / double(end_bin - start_bin));
+
+          out_fft[j] = 0.0;
+          j++;
+        }
+        start_bin = end_bin;
+      }
+
+      return out_fft;
+    }
+
 protected:
-
-    /// Coefficients                      // Variablendeklaration am Ende (Codingconvention)
-    std::vector<double> coeffs_;          // Gaussian numbers for FFT
-    //evergreen::Tensor<double> gaussian_data_;
-    /// The standard derivation \f$ \sigma \f$.
-    double sigma_;
-    /// The spacing of the pre-tabulated kernel coefficients
-    double spacing_;
-
-    // tolerance in ppm
-    bool use_ppm_tolerance_;
-    double ppm_tolerance_;
-
     /// Computes the convolution of the raw data at position x and the gaussian kernel
     template <typename InputPeakIterator>
     double integrate_(InputPeakIterator x /* mz */, InputPeakIterator y /* int */, InputPeakIterator first, InputPeakIterator last) const
     {
-      double v = 0.;      // was bedeutet v? -> unpassende variablen Benennung      // Fläche unter der (f*g) = h-Funktion
+      double v = 0.;
       // norm the gaussian kernel area to one
       double norm = 0.;
-      Size middle = coeffs_.size();     // unpassende variablen Benennung
+      Size middle = coeffs_.size();
 
       double start_pos = (((*x) - (middle * spacing_)) > (*first)) ? ((*x) - (middle * spacing_)) : (*first);
       double end_pos = (((*x) + (middle * spacing_)) < (*(last - 1))) ? ((*x) + (middle * spacing_)) : (*(last - 1));
@@ -472,6 +476,17 @@ protected:
         return 0;
       }
     }
+
+    /// Coefficients
+    std::vector<double> coeffs_;          // Gaussian numbers for FFT
+    /// The standard derivation \f$ \sigma \f$.
+    double sigma_;
+    /// The spacing of the pre-tabulated kernel coefficients
+    double spacing_;
+
+    // tolerance in ppm
+    bool use_ppm_tolerance_;
+    double ppm_tolerance_;
 
   };
 

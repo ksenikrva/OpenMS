@@ -115,7 +115,7 @@ namespace OpenMS
     }
   }
 
-  void GaussFilter::filter(MSChromatogram & chromatogram) const
+  void GaussFilter::filter(MSChromatogram & chromatogram) 
   {
     if (param_.getValue("use_ppm_tolerance").toBool())
     {
