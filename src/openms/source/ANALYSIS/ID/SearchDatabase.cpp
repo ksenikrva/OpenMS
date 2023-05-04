@@ -131,9 +131,10 @@ std::vector<SearchDatabase::Fragment_> SearchDatabase::generate_fragments_() con
   return all_frags;
 }
 
-SearchDatabase::SearchDatabase(const std::vector<FASTAFile::FASTAEntry>& entries, size_t bucketsize) : DefaultParamHandler("SearchDatabase")
+SearchDatabase::SearchDatabase(const std::vector<FASTAFile::FASTAEntry>& entries) : DefaultParamHandler("SearchDatabase")
 { 
   vector<String> all_enzymes;
+  vector<string> tolerance_units{"Da", "ppm"};
   ProteaseDB::getInstance()->getAllNames(all_enzymes);
   defaults_.setValue("digestor_enzyme", "Trypsin", "Enzyme for digestion");
   defaults_.setValidStrings("digestor_enzyme", ListUtils::create<std::string>(all_enzymes));
@@ -146,10 +147,10 @@ SearchDatabase::SearchDatabase(const std::vector<FASTAFile::FASTAEntry>& entries
   defaults_.setValue("fragment_max_mz", 2000, "maximal fragment mz for database");
   defaults_.setValue("precursor_mz_tolerance", 2, "tolerance for precursor-MZ in search");
   defaults_.setValue("fragment_mz_tolerance", 0.05, "tolerance for fragment-MZ in search");
-
-  //precursor_mz_tolerance_unit_ = "Da";
-
-  //fragment_mz_tolerance_unit_ = "Da";
+  defaults_.setValue("precursor_mz_tolerance_unit", "Da", "unit of tolerance for precursor-MZ");
+  defaults_.setValidStrings("precursor_mz_tolerance_unit", tolerance_units);
+  defaults_.setValue("fragment_mz_tolerance_unit", "Da", "unit of tolerance for fragment-MZ");
+  defaults_.setValidStrings("fragment_mz_tolerance_unit", tolerance_units);
 
   defaultsToParam_();
 
@@ -159,9 +160,7 @@ SearchDatabase::SearchDatabase(const std::vector<FASTAFile::FASTAEntry>& entries
 
   all_fragments_ = generate_fragments_();
   
-  // bucketsize_ = size_t(sqrt(all_fragments_.size())); //calculating bucketsize for balanced tree (performance)
-
-  bucketsize_ = bucketsize;
+  bucketsize_ = size_t(sqrt(all_fragments_.size())); //calculating bucketsize for balanced tree (performance)
 
   for (size_t i = 0; i < all_fragments_.size(); i += bucketsize_)
   {
@@ -195,6 +194,8 @@ void SearchDatabase::updateMembers_()
   fragment_max_mz_ = param_.getValue("fragment_max_mz");
   precursor_mz_tolerance_ = param_.getValue("precursor_mz_tolerance");
   fragment_mz_tolerance_ = param_.getValue("fragment_mz_tolerance");
+  precursor_mz_tolerance_unit_ = param_.getValue("precursor_mz_tolerance_unit").toString();
+  fragment_mz_tolerance_unit_ = param_.getValue("fragment_mz_tolerance_unit").toString();
 }
 
 void SearchDatabase::search(MSSpectrum& spectrum, std::vector<SearchDatabase::Candidate>& candidates) const
@@ -214,31 +215,40 @@ void SearchDatabase::search(MSSpectrum& spectrum, std::vector<SearchDatabase::Ca
   size_t count_found = 0;
   size_t count_rounds = 0;
 
+  auto prec_unit_cond = precursor_mz_tolerance_unit_ == "Da";
+  auto frag_unit_cond = fragment_mz_tolerance_unit_ == "Da";
+
   for (const auto& peak : spectrum)
   {
     if (count_found == 0 && count_rounds == 5) return; // if peak with the 5 highest intensity don't match, skip whole spectrum
 
-    auto itr_lower = lower_bound(bucket_frags_mz_.begin(), bucket_frags_mz_.end(), peak.getMZ() - fragment_mz_tolerance_);
+    double new_frag_mz_tolerance = frag_unit_cond ? fragment_mz_tolerance_ : Math::ppmToMassAbs(fragment_mz_tolerance_, peak.getMZ());
+
+    auto itr_lower = lower_bound(bucket_frags_mz_.begin(), bucket_frags_mz_.end(), peak.getMZ() -  new_frag_mz_tolerance);
     
     size_t index_lower = distance(bucket_frags_mz_.begin(), itr_lower);
+
     if (index_lower != 0) index_lower--; // lower bound returns one too high (because searching the minimum of each bucket)
 
-    while (bucket_frags_mz_[index_lower] <= (peak.getMZ() + fragment_mz_tolerance_) && index_lower < bucket_frags_mz_.size())
+    while (bucket_frags_mz_[index_lower] <= (peak.getMZ() + new_frag_mz_tolerance) && index_lower < bucket_frags_mz_.size())
     { 
       auto bucket_start = all_fragments_.begin() + (index_lower * bucketsize_);
       auto bucket_end = all_fragments_.begin() + (index_lower + 1) * bucketsize_;
 
       auto condition = distance(all_fragments_.begin(), bucket_end) >= int(all_fragments_.size());
 
-      auto itr_lower_inner = lower_bound(bucket_start, condition ? all_fragments_.end() : bucket_end, prec_mz - precursor_mz_tolerance_,
+      double new_prec_mz_tolerance = prec_unit_cond ? precursor_mz_tolerance_ : Math::ppmToMassAbs(precursor_mz_tolerance_, prec_mz);
+
+      auto itr_lower_inner = lower_bound(bucket_start, condition ? all_fragments_.end() : bucket_end, prec_mz - new_prec_mz_tolerance,
       [&](const SearchDatabase::Fragment_& r, double l) {
       return (all_peptides_[r.peptide_index_].peptide_mz_ < l);
       });
 
-      while (all_peptides_[(*itr_lower_inner).peptide_index_].peptide_mz_ <= (prec_mz + precursor_mz_tolerance_) && itr_lower_inner != bucket_end && itr_lower_inner != all_fragments_.end())
+      while (all_peptides_[(*itr_lower_inner).peptide_index_].peptide_mz_ <= (prec_mz + new_prec_mz_tolerance) && itr_lower_inner != bucket_end && itr_lower_inner != all_fragments_.end())
       { 
+        double theoretical_peak_tolerance = frag_unit_cond ? fragment_mz_tolerance_ : Math::ppmToMassAbs(fragment_mz_tolerance_, (*itr_lower_inner).fragment_mz_);
         // filter by matching fragment-MZ
-        if (!Math::contains(peak.getMZ(), (*itr_lower_inner).fragment_mz_ - fragment_mz_tolerance_, (*itr_lower_inner).fragment_mz_ + fragment_mz_tolerance_)) 
+        if (!Math::contains(peak.getMZ(), (*itr_lower_inner).fragment_mz_ - theoretical_peak_tolerance, (*itr_lower_inner).fragment_mz_ + theoretical_peak_tolerance)) 
         {
           ++itr_lower_inner;
           continue;

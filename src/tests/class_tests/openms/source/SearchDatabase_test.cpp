@@ -106,108 +106,6 @@ class SearchDatabase_test : public SearchDatabase
 
 START_TEST(SearchDatabase, "$Id:$")
 
-/* START_SECTION(SearchDatabase(const std::vector<FASTAFile::FASTAEntry>& entries))
-
-  std::vector<FASTAFile::FASTAEntry> entries{
-  {"test1", "test1", "LRLRACGLNFADLMARQGLYPPLL"}};
-
-  vector<pair<double,double>> expected_fragments{
-  {899.512, 175.054},
-  {899.512, 175.119},
-  {899.512, 186.087},
-  {899.512, 232.075},
-  {1280.6, 175.119},
-  {1280.6, 232.075},
-  {899.512, 245.186},
-  {899.512, 246.156},
-  {899.512, 299.171},
-  {899.512, 342.239},
-  {899.512, 345.159},
-  {1280.6, 246.156},
-  {1280.6, 345.159},
-  {899.512, 377.197},
-  {899.512, 439.291},
-  {899.512, 459.202},
-  {899.512, 462.235},
-  {899.512, 490.281},
-  {1280.6, 377.197},
-  {1280.6, 459.202},
-  {899.512, 559.287},
-  {899.512, 602.355},
-  {899.512, 605.308},
-  {899.512, 606.27},
-  {1280.6, 490.281},
-  {1280.6, 605.308},
-  {1280.6, 606.27},
-  {899.512, 656.34},
-  {899.512, 676.345},
-  {899.512, 677.308},
-  {899.512, 715.439},
-  {899.512, 769.424},
-  {1280.6, 676.345},
-  {1280.6, 677.308},
-  {899.512, 772.46},
-  {899.512, 792.335},
-  {899.512, 823.413},
-  {899.512, 905.419},
-  {1280.6, 792.335},
-  {1280.6, 823.413},
-  {1280.6, 905.419},
-  {899.512, 937.456},
-  {899.512, 1036.46},
-  {899.512, 1050.54},
-  {899.512, 1107.5},
-  {1280.6, 937.456},
-  {1280.6, 1036.46},
-  {1280.6, 1050.54},
-  {899.512, 1107.56},
-  {899.512, 1210.57},
-  {1280.6, 1107.5},
-  {1280.6, 1107.56},
-  {1280.6, 1210.57},
-  };
-
-  SearchDatabase_test sdb(entries);
-
-  vector<AASequence> all_peptides;
-
-  ProteaseDigestion digestor;
-  
-  digestor.setEnzyme(sdb.getDigestorEnzyme());
-  digestor.setMissedCleavages(sdb.getMissedCleavages());
-  digestor.digest(AASequence::fromString(entries[0].sequence), all_peptides, sdb.getpeptide_minlen(), sdb.getpeptide_maxlen());
-
-  for (auto i : all_peptides)
-  {
-    cout << i.toString() <<  "\n";
-  }
-
-  TheoreticalSpectrumGenerator tsg;
-  PeakSpectrum b_y_ions;
-  int count_all_frags=0;  
-    
-  for (size_t i = 0; i < all_peptides.size(); i++)
-  { 
-    tsg.getSpectrum(b_y_ions, all_peptides[i], 1, 1);      
-    for (const auto& frag : b_y_ions)
-    { 
-      if (!Math::contains(frag.getMZ(), sdb.getfrag_minMZ(), sdb.getfrag_maxMZ())) continue;
-      count_all_frags++;        
-    }
-    b_y_ions.clear(true);
-  }
-
-  cout << count_all_frags << "\n";
-
-  TEST_EQUAL(sdb.getAllFragments().size(), expected_fragments.size())
-
-  for (size_t i = 0; i < sdb.getAllFragments().size(); i++)
-  {
-    // TEST_EQUAL(sdb.getFragMZ(i), expected_fragments[i].second)
-    // TEST_EQUAL(sdb.getPrecMZ(i), expected_fragments[i].first)
-  }
-
-END_SECTION */
 
 START_SECTION(SearchDatabase(const std::vector<FASTAFile::FASTAEntry>& entries))
 
@@ -216,7 +114,7 @@ START_SECTION(SearchDatabase(const std::vector<FASTAFile::FASTAEntry>& entries))
   {"test2", "test2", "AAASPPLLRCLVLTGFGGYD"},
   {"test3", "test3", "KVKLQSRPAAPPAPGPGQLT"}};
 
-  SearchDatabase_test sdb(entries, 10);
+  SearchDatabase_test sdb(entries);
 
   vector<AASequence> all_peptides;
 
@@ -268,7 +166,7 @@ START_SECTION(void search(MSSpectrum& spectrum, std::vector<Candidate>& candidat
   {"test2", "test2", "AAASPPLLRCLVLTGFGGYD"},
   {"test3", "test3", "KVKLQSRPAAPPAPGPGQLT"}};
 
-  SearchDatabase_test sdb(entries, 10);
+  SearchDatabase_test sdb(entries);
 
   MSSpectrum spec;
 
@@ -287,7 +185,7 @@ START_SECTION(void search(MSSpectrum& spectrum, std::vector<Candidate>& candidat
   spec.push_back({605.308, 100});
   spec.push_back({676.345, 100});
   spec.push_back({823.413, 100});  
-  
+
   sdb.search(spec, candidates);
 
   TEST_EQUAL(candidates.size(), 1)
@@ -393,7 +291,7 @@ START_SECTION(void search(MSExperiment& experiment, std::vector<std::pair<std::v
   {"test2", "test2", "AAASPPLLRCLVLTGFGGYD"},
   {"test3", "test3", "KVKLQSRPAAPPAPGPGQLT"}};
 
-  SearchDatabase_test sdb(entries, 10);
+  SearchDatabase_test sdb(entries);
 
   MSExperiment exp;
 

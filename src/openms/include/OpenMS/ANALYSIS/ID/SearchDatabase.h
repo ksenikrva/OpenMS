@@ -67,7 +67,7 @@ class OPENMS_DLLAPI SearchDatabase : public DefaultParamHandler
 
      * @param entries Input vector of FASTAFile-Entries to base SearchDatastructure on
     */
-  SearchDatabase(const std::vector<FASTAFile::FASTAEntry>& entries, size_t bucketsize);  
+  SearchDatabase(const std::vector<FASTAFile::FASTAEntry>& entries);  
   /** @brief Searches Peaks of every MSSpectrum of the MSExperiment in the Database       
 
      * @param experiment Input MSExperiment containing of MS2 Spectra
@@ -122,9 +122,9 @@ class OPENMS_DLLAPI SearchDatabase : public DefaultParamHandler
   double fragment_max_mz_;
   size_t bucketsize_; ///< number of fragments per outer node
   double precursor_mz_tolerance_;
-  //std::string precursor_mz_tolerance_unit_;
+  std::string precursor_mz_tolerance_unit_;
   double fragment_mz_tolerance_;
-  //std::string fragment_mz_tolerance_unit_;
+  std::string fragment_mz_tolerance_unit_;
   std::vector<Peptide_> all_peptides_{};
   std::vector<double> bucket_frags_mz_{}; ///< Minimum fragment-MZ for each other node
   std::vector<Fragment_> all_fragments_{};
